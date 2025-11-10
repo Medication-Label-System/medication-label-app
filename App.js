@@ -1,11 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 import './App.css';
-
-// Import your logo - adjust the path and file name as needed
 import pharmacyLogo from './assets/logo.png';
 
-const API_BASE_URL = process.env.REACT_APP_API_URL || 'http://localhost:5000';
+// ✅ Use Netlify functions - no external backend needed!
+const API_BASE_URL = window.location.origin;
 
 function App() {
   const [user, setUser] = useState(null);
@@ -33,15 +32,48 @@ function App() {
   // Load medications on startup
   useEffect(() => {
     loadMedications();
-    loadBasket();
     loadLocalAuditLogs();
   }, []);
 
-  // Login function
+  // Load medications from Netlify function
+  const loadMedications = async () => {
+    try {
+      const response = await axios.get('/.netlify/functions/medications');
+      setMedications(response.data.medications);
+    } catch (error) {
+      console.error('Error loading medications:', error);
+    }
+  };
+
+  // Search patient from Netlify function
+  const searchPatient = async (patientId, year) => {
+    if (!patientId || !year) {
+      alert('Please enter both Patient ID and Year');
+      return;
+    }
+
+    try {
+      const response = await axios.get(`/.netlify/functions/patients-search?patientId=${patientId}&year=${year}`);
+      if (response.data.success) {
+        setPatients({
+          ...response.data.patient,
+          fullId: response.data.fullId
+        });
+      } else {
+        alert('Patient not found: ' + response.data.message);
+        setPatients(null);
+      }
+    } catch (error) {
+      alert('Error searching patient: ' + error.message);
+      setPatients(null);
+    }
+  };
+
+  // Login with Netlify function
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
-      const response = await axios.post('http://localhost:5000/api/auth/login', loginData);
+      const response = await axios.post('/.netlify/functions/auth-login', loginData);
       if (response.data.success) {
         setUser(response.data.user);
         alert(`Welcome ${response.data.user.fullName}!`);
@@ -53,22 +85,10 @@ function App() {
     }
   };
 
-  // Load medications
-  const loadMedications = async () => {
-    try {
-      const response = await axios.get('http://localhost:5000/api/medications');
-      setMedications(response.data.medications);
-      console.log('Loaded medications:', response.data.medications.length);
-    } catch (error) {
-      console.error('Error loading medications:', error);
-    }
-  };
-
-  // Load basket
+  // Load basket from Netlify function
   const loadBasket = async () => {
     try {
-      const response = await axios.get('http://localhost:5000/api/basket');
-      // Add expiry date field to each basket item with separate month/year
+      const response = await axios.get('/.netlify/functions/basket');
       const basketWithExpiry = response.data.basket.map(item => {
         const expiryDate = item.expiryDate || '';
         const [month, year] = expiryDate.split('/');
@@ -85,57 +105,7 @@ function App() {
     }
   };
 
-  // Search patient by ID/Year
-  const searchPatient = async (patientId, year) => {
-    if (!patientId || !year) {
-      alert('Please enter both Patient ID and Year');
-      return;
-    }
-
-    try {
-      const response = await axios.get(`http://localhost:5000/api/patients/search?patientId=${patientId}&year=${year}`);
-      if (response.data.success) {
-        setPatients({
-          ...response.data.patient,
-          fullId: response.data.fullId
-        });
-      } else {
-        alert('Patient not found: ' + response.data.message);
-        setPatients(null);
-      }
-    } catch (error) {
-      alert('Error searching patient: ' + error.message);
-      setPatients(null);
-    }
-  };
-
-  // FIXED SEARCH FUNCTION - Remove duplicates and create unique keys
-  const filterMedications = (medications, searchTerm) => {
-    if (!searchTerm.trim()) return medications;
-    
-    const searchText = searchTerm.trim().toLowerCase();
-    
-    const filtered = medications.filter(medication => {
-      const drugName = (medication.DrugName || '').toLowerCase();
-      const instruction = (medication.Instruction || '').toLowerCase();
-      
-      const nameMatch = drugName.includes(searchText);
-      const instructionMatch = instruction.includes(searchText);
-      const matches = nameMatch || instructionMatch;
-      
-      return matches;
-    });
-    
-    return filtered;
-  };
-
-  // FUNCTION TO CREATE UNIQUE KEYS - Fixes duplicate key issue
-  const createUniqueKey = (medication, index) => {
-    // Use combination of DrugName and index to ensure uniqueness
-    return `${medication.DrugName}-${index}-${medication.InternationalCode || ''}`;
-  };
-
-  // Add medication to basket
+  // Add to basket with Netlify function
   const addToBasket = async (medication) => {
     if (!patients) {
       alert('Please search and select a patient first!');
@@ -147,31 +117,41 @@ function App() {
       : medication.Instruction;
 
     try {
-      await axios.post('http://localhost:5000/api/basket/add', {
+      await axios.post('/.netlify/functions/basket', {
         drugName: medication.DrugName,
         instructionText: instructionToUse
       });
       
       loadBasket();
       
-      // Clear custom instruction after adding
       if (useCustomInstruction) {
         setCustomInstruction('');
         setUseCustomInstruction(false);
       }
       
-      // Show success message
-      const message = useCustomInstruction 
-        ? `Added ${medication.DrugName} with custom instruction`
-        : `Added ${medication.DrugName} to basket`;
-      
-      alert(message);
+      alert(`Added ${medication.DrugName} to basket`);
     } catch (error) {
       alert('Error adding to basket: ' + error.message);
     }
   };
 
-  // FIXED: DROPDOWN EXPIRY DATE SELECTOR
+  // Clear basket with Netlify function
+  const clearBasket = async () => {
+    try {
+      await axios.delete('/.netlify/functions/basket');
+      setBasket([]);
+      alert('Basket cleared successfully');
+    } catch (error) {
+      alert('Error clearing basket: ' + error.message);
+    }
+  };
+
+  // Remove from basket
+  const removeFromBasket = async (tempId) => {
+    setBasket(prev => prev.filter(item => item.TempID !== tempId));
+  };
+
+  // Expiry date handlers
   const handleExpiryMonthChange = (tempId, month) => {
     setBasket(prevBasket => 
       prevBasket.map(item => {
@@ -204,40 +184,7 @@ function App() {
     );
   };
 
-  // Remove from basket
-  const removeFromBasket = async (tempId) => {
-    try {
-      await axios.delete(`http://localhost:5000/api/basket/${tempId}`);
-      loadBasket();
-    } catch (error) {
-      alert('Error removing from basket: ' + error.message);
-    }
-  };
-
-  // Clear basket
-  const clearBasket = async () => {
-    if (basket.length === 0) {
-      alert('Basket is already empty');
-      return;
-    }
-
-    if (window.confirm('Are you sure you want to clear all medications from the basket?')) {
-      try {
-        await axios.delete('http://localhost:5000/api/basket');
-        loadBasket();
-        alert('Basket cleared successfully');
-      } catch (error) {
-        alert('Error clearing basket: ' + error.message);
-      }
-    }
-  };
-
-  // Function to convert image to base64 for printing
-  const getLogoForPrint = () => {
-    return pharmacyLogo;
-  };
-
-  // LOCAL STORAGE AUDIT LOGGING - No backend modification needed
+  // Local storage audit
   const saveToLocalAudit = async () => {
     try {
       const timestamp = new Date().toISOString();
@@ -258,14 +205,11 @@ function App() {
         status: 'printed'
       }));
 
-      // Save to localStorage
       const existingLogs = JSON.parse(localStorage.getItem('medicationAuditLogs') || '[]');
       const updatedLogs = [...existingLogs, ...localAuditEntries];
       localStorage.setItem('medicationAuditLogs', JSON.stringify(updatedLogs));
       
-      console.log('✅ Saved to local audit:', localAuditEntries.length, 'entries');
       setAuditLogs(updatedLogs);
-      
       return localAuditEntries;
     } catch (error) {
       console.error('Error saving to local audit:', error);
@@ -273,18 +217,15 @@ function App() {
     }
   };
 
-  // Load local audit logs
   const loadLocalAuditLogs = () => {
     try {
       const logs = JSON.parse(localStorage.getItem('medicationAuditLogs') || '[]');
       setAuditLogs(logs);
-      console.log('📊 Loaded local audit logs:', logs.length);
     } catch (error) {
       console.error('Error loading local audit logs:', error);
     }
   };
 
-  // Clear local audit logs
   const clearLocalAuditLogs = () => {
     if (window.confirm('Are you sure you want to clear all local audit logs?')) {
       localStorage.removeItem('medicationAuditLogs');
@@ -293,409 +234,91 @@ function App() {
     }
   };
 
-  // FIXED BACKEND AUDIT - Remove ExpiryDate field to match database schema
-  const testBackendAudit = async () => {
-    console.log('🔧 Testing backend audit endpoint...');
-    
-    try {
-      // Test with data that matches the database schema (NO ExpiryDate)
-      const testData = {
-        patientId: 'TEST123',
-        patientYear: '2025',
-        patientName: 'Test Patient',
-        drugName: 'Test Drug',
-        instructionText: 'Test Instruction',
-        printedBy: user?.fullName || 'Test User'
-        // Removed ExpiryDate field to match database schema
-      };
+  // Print function
+  const generatePrintPreview = () => {
+    if (!patients || basket.length === 0 || !user) return;
 
-      const response = await axios.post('http://localhost:5000/api/audit', testData, {
-        timeout: 3000
-      });
-      
-      console.log('✅ Backend audit test SUCCESS:', response.data);
-      return { success: true, data: response.data };
-      
-    } catch (error) {
-      console.error('❌ Backend audit test FAILED:', error.response?.data || error.message);
-      
-      // Detailed error analysis
-      if (error.response) {
-        console.error('📋 Backend response:', {
-          status: error.response.status,
-          data: error.response.data,
-          headers: error.response.headers
-        });
-      } else if (error.request) {
-        console.error('🌐 No response received - network issue');
-      } else {
-        console.error('⚙️ Request setup error:', error.message);
-      }
-      
-      return { success: false, error: error.message };
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) {
+      alert('Please allow popups for printing');
+      return;
     }
-  };
 
-  // FIXED AUDIT TRAIL - Remove ExpiryDate from backend requests
-  const saveToAuditTrail = async () => {
-    console.log('🔄 Starting audit trail process...');
+    const currentDate = new Date().toLocaleDateString('en-GB');
+    const logoUrl = pharmacyLogo;
     
-    // First try backend
-    const backendTest = await testBackendAudit();
-    
-    if (backendTest.success) {
-      console.log('✅ Backend audit available - proceeding with backend save');
-      try {
-        const auditPromises = basket.map((item, index) => {
-          // FIXED: Remove ExpiryDate field to match database schema
-          const auditData = {
-            patientId: patients.PatientID,
-            patientYear: patients.Year,
-            patientName: patients.PatientName,
-            drugName: item.DrugName,
-            instructionText: item.InstructionText,
-            printedBy: user.fullName
-            // Removed ExpiryDate to fix the database column error
-          };
+    let labelsHTML = '';
 
-          return axios.post('http://localhost:5000/api/audit', auditData, {
-            timeout: 3000
-          }).then(response => {
-            console.log(`✅ Backend audit saved for: ${item.DrugName}`);
-            return response;
-          }).catch(error => {
-            console.warn(`❌ Backend save failed for ${item.DrugName}:`, error.message);
-            return { success: false, error: error.message };
-          });
-        });
-
-        const results = await Promise.allSettled(auditPromises);
+    basket.forEach(item => {
+      for (let i = 0; i < printQuantity; i++) {
+        let displayExpiry = item.expiryDate;
+        if (item.expiryDate && item.expiryDate.includes('/')) {
+          const [month, year] = item.expiryDate.split('/');
+          displayExpiry = `${month}/20${year}`;
+        }
         
-        const successfulSaves = results.filter(result => 
-          result.status === 'fulfilled' && 
-          result.value && 
-          !result.value.success === false
-        ).length;
-        
-        console.log(`✅ Backend audit completed: ${successfulSaves}/${basket.length} successful`);
-        
-        // Also save to local storage for backup
-        await saveToLocalAudit();
-        
-      } catch (error) {
-        console.error('❌ Backend audit failed, using local storage:', error);
-        await saveToLocalAudit();
-      }
-    } else {
-      console.log('⚠️ Backend audit unavailable - using local storage');
-      await saveToLocalAudit();
-    }
-  };
-// FIXED PRINT FUNCTION - REMOVES HEADERS/FOOTERS AND ENSURES EXACT LABEL SIZE
-const generatePrintPreview = () => {
-  if (!patients || basket.length === 0 || !user) return;
-
-  const printWindow = window.open('', '_blank');
-  if (!printWindow) {
-    alert('Please allow popups for printing');
-    return;
-  }
-
-  const currentDate = new Date().toLocaleDateString('en-GB');
-  const logoUrl = getLogoForPrint();
-  
-  let labelsHTML = '';
-
-  // Generate separate labels for each medication
-  basket.forEach(item => {
-    for (let i = 0; i < printQuantity; i++) {
-      let displayExpiry = item.expiryDate;
-      if (item.expiryDate && item.expiryDate.includes('/')) {
-        const [month, year] = item.expiryDate.split('/');
-        displayExpiry = `${month}/20${year}`;
-      }
-      
-      labelsHTML += `
-        <div class="label-container">
-          <div class="label-content">
-            <!-- Header Section with Logo and ID -->
-            <div class="label-header">
-              <!-- Logo -->
-              <div class="logo-container">
-                <img src="${logoUrl}" alt="Pharmacy Logo" class="logo-image" onerror="this.style.display='none'" />
+        labelsHTML += `
+          <div class="label-container">
+            <div class="label-content">
+              <div class="label-header">
+                <div class="logo-container">
+                  <img src="${logoUrl}" alt="Pharmacy Logo" class="logo-image" onerror="this.style.display='none'" />
+                </div>
+                <div class="patient-id">ID: ${patients.fullId}</div>
               </div>
-              
-              <!-- Patient ID -->
-              <div class="patient-id">
-                ID: ${patients.fullId}
-              </div>
-            </div>
-            
-            <!-- Patient Name Section -->
-            <div class="patient-name">
-              <strong>${patients.PatientName}</strong>
-            </div>
-            
-            <!-- Drug Name Section -->
-            <div class="drug-name">
-              <strong>${item.DrugName}</strong>
-            </div>
-            
-            <!-- MEDICATION INSTRUCTIONS - LARGER AREA -->
-            <div class="instructions">
-              <span>${item.InstructionText}</span>
-            </div>
-            
-            <!-- Footer Section -->
-            <div class="label-footer">
-              <!-- First line: Expiry and Doctor -->
-              <div class="footer-line">
-                <span>Exp: ${displayExpiry}</span>
-                <span>By: Dr Mahmoud</span>
-              </div>
-              
-              <!-- Second line: Date -->
-              <div class="footer-date">
-                <span>${currentDate}</span>
+              <div class="patient-name"><strong>${patients.PatientName}</strong></div>
+              <div class="drug-name"><strong>${item.DrugName}</strong></div>
+              <div class="instructions"><span>${item.InstructionText}</span></div>
+              <div class="label-footer">
+                <div class="footer-line">
+                  <span>Exp: ${displayExpiry}</span>
+                  <span>By: Dr Mahmoud</span>
+                </div>
+                <div class="footer-date"><span>${currentDate}</span></div>
               </div>
             </div>
           </div>
-        </div>
-      `;
-    }
-  });
+        `;
+      }
+    });
 
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Medication Labels</title>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <style>
-        /* RESET ALL MARGINS AND PADDING */
-        * {
-          margin: 0;
-          padding: 0;
-          box-sizing: border-box;
-        }
-        
-        body {
-          margin: 0 !important;
-          padding: 0 !important;
-          background: white;
-          font-family: Arial, sans-serif;
-          width: 4cm;
-          height: 2.5cm;
-          display: flex;
-          flex-direction: column;
-          align-items: center;
-          justify-content: center;
-        }
-        
-        /* LABEL CONTAINER - EXACT SIZE */
-        .label-container {
-          width: 4cm !important;
-          height: 2.5cm !important;
-          border: 0.5px solid #000;
-          padding: 1mm;
-          margin: 0 !important;
-          page-break-after: always;
-          display: flex;
-          flex-direction: column;
-          overflow: hidden;
-          background: white;
-        }
-        
-        .label-content {
-          flex: 1;
-          display: flex;
-          flex-direction: column;
-          height: 100%;
-        }
-        
-        /* HEADER SECTION */
-        .label-header {
-          height: 0.4cm;
-          display: flex;
-          align-items: center;
-          justify-content: space-between;
-          padding-bottom: 0.5mm;
-          border-bottom: 0.5px solid #000;
-        }
-        
-        .logo-container {
-          flex: 1;
-          display: flex;
-          align-items: center;
-        }
-        
-        .logo-image {
-          max-height: 0.3cm;
-          max-width: 70%;
-          width: auto;
-          object-fit: contain;
-        }
-        
-        .patient-id {
-          flex: 1;
-          text-align: right;
-          font-size: 4pt;
-        }
-        
-        /* PATIENT NAME */
-        .patient-name {
-          height: 0.25cm;
-          text-align: center;
-          margin: 0.3mm 0;
-          padding: 0.5mm 0;
-          line-height: 1;
-          overflow: hidden;
-          border-bottom: 0.5px solid #000;
-          font-size: 5pt;
-        }
-        
-        .patient-name strong {
-          display: block;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        
-        /* DRUG NAME */
-        .drug-name {
-          height: 0.25cm;
-          text-align: center;
-          margin: 0.1mm 0;
-          padding: 0.3mm 0;
-          line-height: 1;
-          overflow: hidden;
-          border-bottom: 0.5px solid #000;
-          font-size: 5pt;
-        }
-        
-        .drug-name strong {
-          display: block;
-          overflow: hidden;
-          text-overflow: ellipsis;
-          white-space: nowrap;
-        }
-        
-        /* INSTRUCTIONS */
-        .instructions {
-          flex: 1;
-          min-height: 0.8cm;
-          margin: 0.1mm 0;
-          padding: 0.5mm;
-          line-height: 1.1;
-          overflow: hidden;
-          border-bottom: 0.5px solid #000;
-          font-size: 5pt;
-        }
-        
-        .instructions span {
-          display: block;
-          word-wrap: break-word;
-          line-height: 1.2;
-          height: 100%;
-          overflow: hidden;
-          text-align: center;
-          direction: rtl;
-        }
-        
-        /* FOOTER */
-        .label-footer {
-          height: 0.3cm;
-          font-size: 4pt;
-          display: flex;
-          flex-direction: column;
-          justify-content: space-between;
-          padding-top: 0.2mm;
-        }
-        
-        .footer-line {
-          display: flex;
-          justify-content: space-between;
-        }
-        
-        .footer-date {
-          text-align: center;
-        }
-        
-        /* PRINT SETTINGS - CRITICAL FOR EXACT SIZE */
-        @media print {
-          /* REMOVE ALL BROWSER HEADERS/FOOTERS */
-          @page {
-            margin: 0 !important;
-            padding: 0 !important;
-            size: 4cm 2.5cm !important;
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Medication Labels</title>
+        <style>
+          * { margin: 0; padding: 0; box-sizing: border-box; }
+          body { margin: 0 !important; padding: 0 !important; background: white; font-family: Arial; }
+          .label-container { width: 4cm !important; height: 2.5cm !important; border: 0.5px solid #000; padding: 1mm; margin: 0 !important; page-break-after: always; display: flex; flex-direction: column; overflow: hidden; }
+          .label-content { flex: 1; display: flex; flex-direction: column; height: 100%; }
+          .label-header { height: 0.4cm; display: flex; align-items: center; justify-content: space-between; padding-bottom: 0.5mm; border-bottom: 0.5px solid #000; }
+          .logo-image { max-height: 0.3cm; max-width: 70%; width: auto; object-fit: contain; }
+          .patient-id { flex: 1; text-align: right; font-size: 4pt; }
+          .patient-name { height: 0.25cm; text-align: center; margin: 0.3mm 0; padding: 0.5mm 0; line-height: 1; overflow: hidden; border-bottom: 0.5px solid #000; font-size: 5pt; }
+          .patient-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .drug-name { height: 0.25cm; text-align: center; margin: 0.1mm 0; padding: 0.3mm 0; line-height: 1; overflow: hidden; border-bottom: 0.5px solid #000; font-size: 5pt; }
+          .drug-name strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+          .instructions { flex: 1; min-height: 0.8cm; margin: 0.1mm 0; padding: 0.5mm; line-height: 1.1; overflow: hidden; border-bottom: 0.5px solid #000; font-size: 5pt; }
+          .instructions span { display: block; word-wrap: break-word; line-height: 1.2; height: 100%; overflow: hidden; text-align: center; direction: rtl; }
+          .label-footer { height: 0.3cm; font-size: 4pt; display: flex; flex-direction: column; justify-content: space-between; padding-top: 0.2mm; }
+          .footer-line { display: flex; justify-content: space-between; }
+          .footer-date { text-align: center; }
+          @media print {
+            @page { margin: 0 !important; padding: 0 !important; size: 4cm 2.5cm !important; }
+            body { margin: 0 !important; padding: 0 !important; width: 4cm !important; height: 2.5cm !important; }
+            .label-container { width: 4cm !important; height: 2.5cm !important; margin: 0 !important; padding: 1mm !important; page-break-after: always; }
+            body * { visibility: hidden; }
+            .label-container, .label-container * { visibility: visible; }
           }
-          
-          body {
-            margin: 0 !important;
-            padding: 0 !important;
-            width: 4cm !important;
-            height: 2.5cm !important;
-          }
-          
-          .label-container {
-            width: 4cm !important;
-            height: 2.5cm !important;
-            margin: 0 !important;
-            padding: 1mm !important;
-            page-break-after: always;
-            break-after: page;
-          }
-          
-          /* HIDE EVERYTHING EXCEPT LABELS */
-          body * {
-            visibility: hidden;
-          }
-          
-          .label-container, .label-container * {
-            visibility: visible;
-          }
-          
-          .label-container {
-            position: relative;
-            left: 0;
-            top: 0;
-          }
-        }
-        
-        /* PDF SPECIFIC SETTINGS */
-        @media print and (color) {
-          .label-container {
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
-          }
-        }
-      </style>
-    </head>
-    <body>
-      ${labelsHTML}
-      <script>
-        window.onload = function() {
-          // Force print without dialogs
-          setTimeout(function() {
-            window.print();
-            
-            // Close window after print
-            setTimeout(function() {
-              window.close();
-            }, 100);
-          }, 100);
-        }
-        
-        // Prevent any browser headers
-        window.onafterprint = function() {
-          window.close();
-        };
-      </script>
-    </body>
-    </html>
-  `);
-  printWindow.document.close();
-};
+        </style>
+      </head>
+      <body>${labelsHTML}</body>
+      </html>
+    `);
+    printWindow.document.close();
+  };
+
   // Print labels
   const printLabels = async () => {
     if (!patients) {
@@ -708,7 +331,6 @@ const generatePrintPreview = () => {
       return;
     }
 
-    // Check if all medications have expiry dates
     const medicationsWithoutExpiry = basket.filter(item => !item.expiryDate);
     if (medicationsWithoutExpiry.length > 0) {
       const missingItems = medicationsWithoutExpiry.map(item => item.DrugName).join(', ');
@@ -722,25 +344,17 @@ const generatePrintPreview = () => {
     }
 
     try {
-      // Generate print preview first (this is what users see)
       generatePrintPreview();
-      
-      // Then save to audit trail in the background
-      await saveToAuditTrail();
-      
-      // Clear basket after successful print
-      await axios.delete('http://localhost:5000/api/basket');
-      loadBasket();
-      
+      await saveToLocalAudit();
+      await clearBasket();
       alert('Labels printed successfully!');
-      
     } catch (error) {
       console.error('Print error:', error);
       alert('Print completed, but there was an issue with audit logging. Check console for details.');
     }
   };
 
-  // Quick patient search handler
+  // Quick patient search
   const handleQuickPatientSearch = (e) => {
     e.preventDefault();
     const formData = new FormData(e.target);
@@ -757,7 +371,30 @@ const generatePrintPreview = () => {
     setLoginData({ username: '', password: '' });
   };
 
-  // Get filtered medications based on search
+  // Search function
+  const filterMedications = (medications, searchTerm) => {
+    if (!searchTerm.trim()) return medications;
+    
+    const searchText = searchTerm.trim().toLowerCase();
+    
+    const filtered = medications.filter(medication => {
+      const drugName = (medication.DrugName || '').toLowerCase();
+      const instruction = (medication.Instruction || '').toLowerCase();
+      
+      const nameMatch = drugName.includes(searchText);
+      const instructionMatch = instruction.includes(searchText);
+      return nameMatch || instructionMatch;
+    });
+    
+    return filtered;
+  };
+
+  // Create unique keys
+  const createUniqueKey = (medication, index) => {
+    return `${medication.DrugName}-${index}-${medication.InternationalCode || ''}`;
+  };
+
+  // Get filtered medications
   const filteredMedications = filterMedications(medications, searchTerm);
 
   // If not logged in, show login form
@@ -795,7 +432,6 @@ const generatePrintPreview = () => {
   // Main application
   return (
     <div className="App">
-      {/* Header */}
       <header className="app-header">
         <h1>💊 Medication Label Printing System</h1>
         <div className="user-info">
@@ -805,26 +441,13 @@ const generatePrintPreview = () => {
       </header>
 
       <div className="main-container">
-        {/* Left Panel - Patient Search & Medications */}
         <div className="left-panel">
-          {/* Patient Search */}
           <div className="section patient-search">
             <h2>🔍 Patient Search</h2>
             <form onSubmit={handleQuickPatientSearch} className="search-form">
               <div className="input-group">
-                <input 
-                  type="text" 
-                  name="patientId" 
-                  placeholder="Patient ID" 
-                  required 
-                />
-                <input 
-                  type="text" 
-                  name="year" 
-                  placeholder="Year" 
-                  defaultValue="2025"
-                  required 
-                />
+                <input type="text" name="patientId" placeholder="Patient ID" required />
+                <input type="text" name="year" placeholder="Year" defaultValue="2025" required />
                 <button type="submit">Search Patient</button>
               </div>
             </form>
@@ -839,11 +462,9 @@ const generatePrintPreview = () => {
             )}
           </div>
 
-          {/* Medications List */}
           <div className="section medications-section">
             <h2>💊 Available Medications ({medications.length})</h2>
             
-            {/* Search Box */}
             <input 
               type="text" 
               placeholder="ابحث باسم الدواء..." 
@@ -853,14 +474,12 @@ const generatePrintPreview = () => {
               style={{textAlign: 'right'}}
             />
 
-            {/* Show search results info */}
             {searchTerm && (
               <div style={{margin: '5px 0', fontSize: '0.9em', color: '#666'}}>
                 {filteredMedications.length} medications found for "{searchTerm}"
               </div>
             )}
 
-            {/* Custom Instruction Toggle */}
             <div className="custom-instruction-toggle">
               <label>
                 <input 
@@ -880,7 +499,6 @@ const generatePrintPreview = () => {
               )}
             </div>
 
-            {/* Medications List - Uses unique keys to avoid duplicates */}
             <div className="medications-list">
               {filteredMedications.length === 0 && searchTerm ? (
                 <div style={{textAlign: 'center', padding: '20px', color: '#666'}}>
@@ -909,9 +527,7 @@ const generatePrintPreview = () => {
           </div>
         </div>
 
-        {/* Right Panel - Basket & Print Controls */}
         <div className="right-panel">
-          {/* Basket */}
           <div className="section basket-section">
             <h2>🛒 Medication Basket ({basket.length} items)</h2>
             
@@ -925,7 +541,6 @@ const generatePrintPreview = () => {
                       <strong>{item.DrugName}</strong>
                       <p>{item.InstructionText}</p>
                       
-                      {/* FIXED: DROPDOWN EXPIRY DATE SELECTOR */}
                       <div className="expiry-input">
                         <label>Expiry Date:</label>
                         <div style={{display: 'flex', gap: '10px', alignItems: 'center', marginTop: '5px'}}>
@@ -936,9 +551,7 @@ const generatePrintPreview = () => {
                           >
                             <option value="">Select Month</option>
                             {months.map(month => (
-                              <option key={month.value} value={month.value}>
-                                {month.label}
-                              </option>
+                              <option key={month.value} value={month.value}>{month.label}</option>
                             ))}
                           </select>
                           
@@ -949,9 +562,7 @@ const generatePrintPreview = () => {
                           >
                             <option value="">Select Year</option>
                             {years.map(year => (
-                              <option key={year.value} value={year.value}>
-                                {year.label}
-                              </option>
+                              <option key={year.value} value={year.value}>{year.label}</option>
                             ))}
                           </select>
                           
@@ -963,18 +574,12 @@ const generatePrintPreview = () => {
                         </div>
                       </div>
                     </div>
-                    <button 
-                      onClick={() => removeFromBasket(item.TempID)}
-                      className="remove-btn"
-                    >
-                      ❌
-                    </button>
+                    <button onClick={() => removeFromBasket(item.TempID)} className="remove-btn">❌</button>
                   </div>
                 ))}
               </div>
             )}
 
-            {/* Basket Controls */}
             {basket.length > 0 && (
               <div className="basket-controls">
                 <div className="form-group">
@@ -987,22 +592,17 @@ const generatePrintPreview = () => {
                     onChange={(e) => setPrintQuantity(parseInt(e.target.value) || 1)}
                   />
                 </div>
-                <button onClick={clearBasket} className="clear-btn">
-                  Clear Basket
-                </button>
+                <button onClick={clearBasket} className="clear-btn">Clear Basket</button>
               </div>
             )}
           </div>
 
-          {/* Print Controls */}
           {patients && basket.length > 0 && (
             <div className="section print-section">
               <h2>🖨️ Print Labels</h2>
               
               <div className="print-controls">
-                <button onClick={printLabels} className="print-btn">
-                  🖨️ Print All Labels
-                </button>
+                <button onClick={printLabels} className="print-btn">🖨️ Print All Labels</button>
                 
                 <div className="print-summary">
                   <p><strong>Print Summary:</strong></p>
@@ -1015,31 +615,13 @@ const generatePrintPreview = () => {
                 </div>
               </div>
 
-              {/* Audit Logging Controls */}
               <div className="section audit-section" style={{marginTop: '20px', border: '1px solid #ddd', padding: '15px'}}>
                 <h3>📊 Audit Logging</h3>
                 <div style={{display: 'flex', gap: '10px', flexWrap: 'wrap'}}>
-                  <button 
-                    onClick={testBackendAudit}
-                    style={{backgroundColor: '#17a2b8'}}
-                  >
-                    🔧 Test Backend Audit
-                  </button>
-                  <button 
-                    onClick={loadLocalAuditLogs}
-                    style={{backgroundColor: '#28a745'}}
-                  >
-                    📋 View Local Logs ({auditLogs.length})
-                  </button>
-                  <button 
-                    onClick={clearLocalAuditLogs}
-                    style={{backgroundColor: '#dc3545'}}
-                  >
-                    🗑️ Clear Local Logs
-                  </button>
+                  <button onClick={loadLocalAuditLogs} style={{backgroundColor: '#28a745'}}>📋 View Local Logs ({auditLogs.length})</button>
+                  <button onClick={clearLocalAuditLogs} style={{backgroundColor: '#dc3545'}}>🗑️ Clear Local Logs</button>
                 </div>
                 
-                {/* Local Audit Logs Display */}
                 {auditLogs.length > 0 && (
                   <div style={{marginTop: '10px', maxHeight: '200px', overflowY: 'auto'}}>
                     <h4>Recent Local Audit Logs:</h4>
